@@ -1,52 +1,33 @@
 name: CI-CD Docker Pipeline
-
 on:
   push:
     branches:
       - main
-
 env:
   IMAGE_NAME: ci-html
   IMAGE_TAG: 1.0.1
-  DOCKER_REGISTRY: ${{ secrets.DOCKERHUB_USERNAME }}
-
 jobs:
-
-  # ===============================
-  # JOB 1 - CI : BUILD + PUSH
-  # ===============================
   ci:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
-
-      - name: Display variables
-        run: |
-          echo "IMAGE_NAME: $IMAGE_NAME"
-          echo "IMAGE_TAG: $IMAGE_TAG"
-          echo "DOCKER_REGISTRY: $DOCKER_REGISTRY"
-
       - name: Login to Docker Hub
+        env:
+          DOCKER_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKER_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
-          echo "${{ secrets.DOCKERHUB_TOKEN }}" | \
-          docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
-
+          echo "$DOCKER_TOKEN" | docker login -u "$DOCKER_USER" --password-stdin
       - name: Build Docker image
+        env:
+          DOCKER_USER: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
-          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} .
-
-      - name: Verify image
-        run: |
-          docker image ls | grep ${{ env.IMAGE_NAME }}
-
+          docker build -t $DOCKER_USER/$IMAGE_NAME:$IMAGE_TAG .
       - name: Push Docker image
+        env:
+          DOCKER_USER: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
-
-  # ===============================
-  # JOB 2 - SCAN TRIVY (BONUS)
-  # ===============================
+          docker push $DOCKER_USER/$IMAGE_NAME:$IMAGE_TAG
   scan-trivy:
     needs: ci
     runs-on: ubuntu-latest
@@ -54,35 +35,27 @@ jobs:
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@0.20.0
         with:
-          image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/ci-html:1.0.1
           format: table
           severity: CRITICAL,HIGH
           exit-code: 1
           vuln-type: os,library
           ignore-unfixed: true
-
-  # ===============================
-  # JOB 3 - CD : DEPLOY
-  # ===============================
   deploy:
     needs: [ci, scan-trivy]
     runs-on: ubuntu-latest
     steps:
       - name: Pull latest image
+        env:
+          DOCKER_USER: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
-          docker pull ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
-
+          docker pull $DOCKER_USER/$IMAGE_NAME:$IMAGE_TAG
       - name: Stop existing container
-        run: |
-          docker stop ci-app || true
-
+        run: docker stop ci-app || true
       - name: Remove old container
-        run: |
-          docker rm ci-app || true
-
+        run: docker rm ci-app || true
       - name: Run new container
+        env:
+          DOCKER_USER: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
-          docker run -d \
-            -p 80:80 \
-            --name ci-app \
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          docker run -d -p 80:80 --name ci-app $DOCKER_USER/$IMAGE_NAME:$IMAGE_TAG
